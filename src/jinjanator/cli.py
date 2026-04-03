@@ -230,7 +230,15 @@ def parse_args(
         help="Output to a file instead of stdout",
     )
 
-    parser.add_argument("template", help="Template file to process")
+    parser.add_argument(
+        "--named-pipe",
+        default=None,
+        metavar="pipe-path",
+        dest="named_pipe",
+        help="Run as a JSON-RPC server listening on the named pipe at the given path",
+    )
+
+    parser.add_argument("template", nargs="?", default=None, help="Template file to process")
 
     parser.add_argument(
         "data",
@@ -265,6 +273,52 @@ def validate_format_options(
                 raise jinjanator_plugins.FormatOptionUnknownError(fmt, opt)
 
     return fmt(options)
+
+
+def _run_render(  # noqa: PLR0913
+    cwd: Path,
+    environ: Mapping[str, str],
+    template_name: str,
+    input_data: TextIO | None,
+    format_name: str,
+    format_options: Sequence[str] | None,
+    import_env: str | None,
+    undefined: bool,  # noqa: FBT001
+    customize_file: str | None,
+    filters: Sequence[str],
+    tests: Sequence[str],
+    output_file: Path | None,
+    plugin_hook_callers: jinjanator_plugins.PluginHookCallers,
+    available_formats: dict[str, type[jinjanator_plugins.Format]],
+) -> str:
+    fmt = validate_format_options(available_formats[format_name], format_options)
+
+    if format_name == "env" and input_data is None:
+        context: Mapping[str, Any] = environ
+    else:
+        context = read_context_data(fmt, input_data, environ, import_env)
+
+    customizations = CustomizationModule.from_file(customize_file)
+
+    context = customizations.alter_context(context)
+
+    renderer = Jinja2TemplateRenderer(
+        cwd,
+        undefined,
+        j2_env_params=customizations.j2_environment_params(),
+        plugin_hook_callers=plugin_hook_callers,
+    )
+
+    customize.apply(customizations, renderer.env, filters=list(filters), tests=list(tests))
+
+    result = renderer.render(template_name, context)
+
+    if output_file:
+        with output_file.open("w") as f:
+            f.write(result)
+        return ""
+
+    return result
 
 
 def render_command(
@@ -326,33 +380,23 @@ def render_command(
     else:
         input_data_f = stdin if args.data is None or str(args.data) == "-" else args.data.open()
 
-    fmt = validate_format_options(available_formats[args.format], args.format_options)
-
-    if args.format == "env" and input_data_f is None:
-        context = environ
-    else:
-        context = read_context_data(
-            fmt,
-            input_data_f,
-            environ,
-            args.import_env,
-        )
-
-    customizations = CustomizationModule.from_file(args.customize)
-
-    context = customizations.alter_context(context)
-
-    renderer = Jinja2TemplateRenderer(
-        cwd,
-        args.undefined,
-        j2_env_params=customizations.j2_environment_params(),
-        plugin_hook_callers=plugin_hook_callers,
-    )
-
-    customize.apply(customizations, renderer.env, filters=args.filters, tests=args.tests)
-
     try:
-        result = renderer.render(args.template, context)
+        result = _run_render(
+            cwd=cwd,
+            environ=environ,
+            template_name=args.template,
+            input_data=input_data_f,
+            format_name=args.format,
+            format_options=args.format_options,
+            import_env=args.import_env,
+            undefined=args.undefined,
+            customize_file=args.customize,
+            filters=args.filters,
+            tests=args.tests,
+            output_file=args.output_file,
+            plugin_hook_callers=plugin_hook_callers,
+            available_formats=available_formats,
+        )
     except jinja2.exceptions.UndefinedError as e:
         # When there's data at stdin, tell the user they should use '-'
         try:
@@ -373,20 +417,38 @@ def render_command(
         # Proceed
         raise
 
-    if args.output_file:
-        with args.output_file.open("w") as f:
-            f.write(result)
-            f.close()
-        return ""
-
     return result
 
 
-def main(args: list[str] | None = None) -> int | None:
-    try:
-        if args is None:  # pragma: no cover
-            args = sys.argv
+def main(args: list[str] | None = None) -> int | None:  # noqa: PLR0911
+    if args is None:  # pragma: no cover
+        args = sys.argv
 
+    # Lightweight pre-parse: check for --named-pipe and whether a template was
+    # supplied, without loading plugins (which parse_args requires for format choices).
+    _pre = argparse.ArgumentParser(add_help=False)
+    _pre.add_argument("--named-pipe", dest="named_pipe", default=None)
+    _pre.add_argument("-v", "--version", dest="version_flag", action="store_true", default=False)
+    _pre.add_argument("template", nargs="?", default=None)
+    _pre_args, _ = _pre.parse_known_args(args[1:])
+
+    if _pre_args.named_pipe:
+        if _pre_args.template is not None:
+            print(
+                "error: --named-pipe cannot be combined with a template argument",
+                file=sys.stderr,
+            )
+            return 1
+        from .rpc import run_server  # noqa: PLC0415
+
+        run_server(_pre_args.named_pipe)
+        return None
+
+    if _pre_args.template is None and not _pre_args.version_flag:
+        print("error: template argument is required", file=sys.stderr)
+        return 1
+
+    try:
         output = render_command(Path.cwd(), os.environ, sys.stdin, args)
     except jinjanator_plugins.FormatOptionUnknownError as exc:
         print(str(exc), file=sys.stderr)
