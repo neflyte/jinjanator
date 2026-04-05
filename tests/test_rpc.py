@@ -61,7 +61,7 @@ def test_jinjanate_unknown_option(rpc: JinjanatorRPC, template_file: Path) -> No
 
 
 def test_jinjanate_relative_template_path(rpc: JinjanatorRPC) -> None:
-    with pytest.raises(ValueError, match="template path must be absolute"):
+    with pytest.raises(ValueError, match="Template path must be absolute"):
         rpc.jinjanate(
             template="relative/path.j2",
             data="-name: world",
@@ -70,7 +70,7 @@ def test_jinjanate_relative_template_path(rpc: JinjanatorRPC) -> None:
 
 
 def test_jinjanate_relative_data_path(rpc: JinjanatorRPC, template_file: Path) -> None:
-    with pytest.raises(ValueError, match="data path must be absolute"):
+    with pytest.raises(ValueError, match="Data path must be absolute"):
         rpc.jinjanate(
             template=str(template_file),
             data="relative/data.yaml",

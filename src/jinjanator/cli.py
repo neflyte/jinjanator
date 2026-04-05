@@ -298,7 +298,7 @@ def _run_render(  # noqa: PLR0913
     else:
         context = read_context_data(fmt, input_data, environ, import_env)
 
-    customizations = CustomizationModule.from_file(customize_file)
+    customizations = CustomizationModule.from_file(customize_file)  # type: ignore[arg-type] 
 
     context = customizations.alter_context(context)
 
@@ -425,7 +425,7 @@ def main(args: list[str] | None = None) -> int | None:  # noqa: PLR0911
         args = sys.argv
 
     # Lightweight pre-parse: check for --named-pipe and whether a template was
-    # supplied, without loading plugins (which parse_args requires for format choices).
+    #  supplied without loading plugins (which parse_args requires for format choices).
     _pre = argparse.ArgumentParser(add_help=False)
     _pre.add_argument("--named-pipe", dest="named_pipe", default=None)
     _pre.add_argument("-v", "--version", dest="version_flag", action="store_true", default=False)
