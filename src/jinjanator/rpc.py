@@ -147,6 +147,7 @@ def run_server(pipe_path: str) -> None:
     path: Path = Path(pipe_path)
     path.unlink(missing_ok=True)  # remove stale socket from a previous run
 
+    print(f"Starting JSON-RPC server on {str(path)}...")
     server_sock: socket.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server_sock.bind(str(path))
     server_sock.listen(1)
@@ -159,6 +160,7 @@ def run_server(pipe_path: str) -> None:
             conn, _ = server_sock.accept()
             try:
                 fd: int = conn.fileno()
+                print(f"Accepted connection from {fd=}")
                 # Dup the socket fd twice so each re-open inside RPC.__init__
                 # gets an independent file descriptor.  closefd=False on the
                 # wrappers ensures only the RPC's FileIO objects own those fds.
@@ -175,19 +177,25 @@ def run_server(pipe_path: str) -> None:
                     raise RuntimeError(msg)
                 # Manually drive the request/response loop until client disconnects
                 while True:
+                    print(f"Waiting for request from {fd=}")
                     line = rpc.stdin.readline()
                     if not line:  # empty bytes means EOF (client closed the connection)
                         break
                     line_str = line.decode("utf-8").strip()
                     if line_str:
+                        print(f"Received request: {line_str=}")
                         rpc._handle(line_str)  # noqa: SLF001
             finally:
                 if rpc:
+                    print("Closing duplicated file descriptors")
                     rpc.stdin.close()  # closes the duplicated fd for reading
                     rpc.stdout.close()  # closes the duplicated fd for writing
+                print("Closing connection")
                 conn.close()
     except KeyboardInterrupt:
         pass
     finally:
+        print("Closing server socket")
         server_sock.close()
+        print(f"Removing socket file {str(path)}")
         path.unlink(missing_ok=True)
